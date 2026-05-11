@@ -5,7 +5,7 @@ import json
 import re
 
 # --- Configuration ---
-genai.configure(api_key="AIzaSyCJ6fKzNBLpQwd58A04t-8FSocG8jxnJYc")
+genai.configure(api_key=st.secrets["AIzaSyAB0m0jSGkY5mdcLnjj3oXjTUy_vBctQ18"])
 
 # --- Helper Functions ---
 def clean_json_response(text):
