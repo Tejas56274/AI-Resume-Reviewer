@@ -5,7 +5,7 @@ import json
 import re
 
 # --- Configuration ---
-genai.configure(api_key=st.secrets["AIzaSyAB0m0jSGkY5mdcLnjj3oXjTUy_vBctQ18"])
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # --- Helper Functions ---
 def clean_json_response(text):
