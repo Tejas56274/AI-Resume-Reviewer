@@ -23,7 +23,6 @@ def clean_json_response(text):
     return text
 
 def get_working_model():
-    """Finds first available model on your account."""
     preferred = [
         "gemini-1.5-flash-latest",
         "gemini-1.5-flash-001",
@@ -70,13 +69,16 @@ def get_ai_response(input_text, pdf_content, prompt):
         return f"EXCEPTION: {str(e)}"
 
 def get_optimized_resume_text(resume_text, jd_context, missing_keywords, suggestions):
-    """Ask Gemini to rewrite resume with optimized content."""
     prompt = f"""
 You are an expert resume writer. Rewrite the following resume to:
 1. Naturally incorporate these missing keywords: {', '.join(missing_keywords)}
 2. Apply these suggestions: {'; '.join(suggestions)}
-3. Keep the same structure, format, and person's actual experience — do NOT fabricate anything
-4. Return ONLY the optimized resume text, no explanations
+3. Keep EXACT same structure and sections as original
+4. Keep all project names, bullet points, certifications, education SAME
+5. Do NOT add new projects or fabricate experience
+6. Do NOT use markdown bold (**text**) — plain text only
+7. Keep live demo links exactly as they are
+8. Return ONLY the resume text, nothing else
 
 Job Description Context: {jd_context}
 
@@ -93,17 +95,16 @@ Original Resume:
     except Exception:
         return resume_text
 
-def generate_optimized_pdf(optimized_text, original_filename):
-    """Generate a clean PDF from optimized resume text."""
+def generate_optimized_pdf(optimized_text):
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        rightMargin=0.6 * inch,
-        leftMargin=0.6 * inch,
-        topMargin=0.6 * inch,
-        bottomMargin=0.6 * inch
+        rightMargin=0.5*inch,
+        leftMargin=0.5*inch,
+        topMargin=0.35*inch,
+        bottomMargin=0.35*inch
     )
 
     DARK = colors.HexColor("#111111")
@@ -111,39 +112,155 @@ def generate_optimized_pdf(optimized_text, original_filename):
     GRAY = colors.HexColor("#444444")
 
     def S(name, **kw):
-        base = dict(fontName="Helvetica", fontSize=10, textColor=GRAY, leading=14, spaceAfter=4)
+        base = dict(fontName="Helvetica", fontSize=8.5,
+                    textColor=GRAY, leading=11, spaceAfter=0)
         base.update(kw)
         return ParagraphStyle(name, **base)
 
-    body_s = S("body", alignment=TA_JUSTIFY)
-    heading_s = S("heading", fontName="Helvetica-Bold", fontSize=13, textColor=DARK,
-                  spaceBefore=10, spaceAfter=4)
-    subheading_s = S("subheading", fontName="Helvetica-Bold", fontSize=10.5,
-                     textColor=BLUE, spaceBefore=6, spaceAfter=2)
-    bullet_s = S("bullet", leftIndent=14, firstLineIndent=-14, spaceAfter=2)
+    name_s    = S("n", fontName="Helvetica-Bold", fontSize=17, textColor=DARK,
+                  alignment=TA_CENTER, spaceAfter=2, leading=20)
+    contact_s = S("c", fontSize=8, textColor=GRAY,
+                  alignment=TA_CENTER, spaceAfter=4, leading=12)
+    sec_s     = S("sec", fontName="Helvetica-Bold", fontSize=9, textColor=BLUE,
+                  spaceBefore=4, spaceAfter=1)
+    proj_s    = S("proj", fontName="Helvetica-Bold", fontSize=8.5, textColor=DARK,
+                  spaceBefore=3, spaceAfter=0)
+    stack_s   = S("stack", fontName="Helvetica-Oblique", fontSize=8,
+                  textColor=BLUE, spaceAfter=1)
+    body_s    = S("body", fontSize=8.2, textColor=GRAY,
+                  leading=11, spaceAfter=1, alignment=TA_JUSTIFY)
+    bul_s     = S("bul", fontSize=8.2, textColor=GRAY, leading=11,
+                  leftIndent=10, firstLineIndent=-10, spaceAfter=1)
+    skill_s   = S("sk", fontSize=8.2, textColor=GRAY, leading=11, spaceAfter=1)
+
+    SECTIONS = [
+        "PROFESSIONAL SUMMARY", "TECHNICAL SKILLS", "PROJECTS",
+        "CERTIFICATIONS", "EDUCATION", "EXPERIENCE", "ACHIEVEMENTS", "SKILLS"
+    ]
+
+    def hr():
+        return HRFlowable(width="100%", thickness=0.7, color=BLUE,
+                          spaceBefore=1, spaceAfter=2)
+
+    def safe(text):
+        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    def b(text):
+        return Paragraph(f"&#x2022; {safe(text)}", bul_s)
 
     story = []
-    lines = optimized_text.split('\n')
+    lines = [l for l in optimized_text.split('\n')]
 
-    for line in lines:
-        line = line.strip()
+    name_done = False
+    contact_done = False
+    current_section = None
+    i = 0
+
+    while i < len(lines):
+        raw = lines[i]
+        line = raw.strip()
+        # Remove markdown bold
+        line = re.sub(r'\*\*', '', line)
+
         if not line:
-            story.append(Spacer(1, 6))
+            i += 1
             continue
 
-        # Detect section headings (ALL CAPS or ends with :)
-        if line.isupper() and len(line) > 3:
-            story.append(Paragraph(line, heading_s))
-            story.append(HRFlowable(width="100%", thickness=0.8, color=BLUE,
-                                    spaceBefore=1, spaceAfter=4))
-        elif line.endswith(':') and len(line) < 40:
-            story.append(Paragraph(line, subheading_s))
-        elif line.startswith('•') or line.startswith('-') or line.startswith('*'):
-            clean = line.lstrip('•-* ').strip()
-            story.append(Paragraph(f"• {clean}", bullet_s))
+        # Name
+        if not name_done:
+            story.append(Paragraph(safe(line), name_s))
+            name_done = True
+            i += 1
+            continue
+
+        # Contact line
+        if not contact_done:
+            story.append(Paragraph(safe(line), contact_s))
+            story.append(HRFlowable(width="100%", thickness=1.1,
+                                    color=DARK, spaceBefore=2, spaceAfter=4))
+            contact_done = True
+            i += 1
+            continue
+
+        # Section heading detection
+        upper = line.upper().strip()
+        if upper in SECTIONS:
+            story.append(Paragraph(line.upper(), sec_s))
+            story.append(hr())
+            current_section = upper
+            i += 1
+            continue
+
+        # TECHNICAL SKILLS section
+        if current_section == "TECHNICAL SKILLS":
+            if ':' in line:
+                parts = line.split(':', 1)
+                label = safe(parts[0].strip())
+                val = safe(parts[1].strip())
+                story.append(Paragraph(f"<b>{label}:</b>  {val}", skill_s))
+            i += 1
+            continue
+
+        # PROJECTS section
+        if current_section == "PROJECTS":
+            # Bullet
+            if line.startswith('•') or line.startswith('-'):
+                clean = re.sub(r'^[•\-]\s*', '', line)
+                story.append(b(clean))
+                i += 1
+                continue
+            # Live demo
+            if line.lower().startswith('live demo'):
+                story.append(Paragraph(f"&#x2022; {safe(line)}", bul_s))
+                i += 1
+                continue
+            # Stack line (contains ·)
+            if '·' in line:
+                story.append(Paragraph(safe(line), stack_s))
+                i += 1
+                continue
+            # Project title — bold, short, capitalized
+            if len(line) < 70 and line[0].isupper():
+                story.append(Paragraph(safe(line), proj_s))
+                i += 1
+                continue
+            # Body fallback
+            story.append(Paragraph(safe(line), body_s))
+            i += 1
+            continue
+
+        # CERTIFICATIONS section
+        if current_section == "CERTIFICATIONS":
+            if line.startswith('•') or line.startswith('-'):
+                clean = re.sub(r'^[•\-]\s*', '', line)
+                story.append(b(clean))
+            else:
+                story.append(Paragraph(safe(line), body_s))
+            i += 1
+            continue
+
+        # EDUCATION section
+        if current_section == "EDUCATION":
+            if line[0].isupper():
+                story.append(Paragraph(safe(line), proj_s))
+            else:
+                story.append(Paragraph(safe(line), body_s))
+            i += 1
+            continue
+
+        # PROFESSIONAL SUMMARY
+        if current_section == "PROFESSIONAL SUMMARY":
+            story.append(Paragraph(safe(line), body_s))
+            i += 1
+            continue
+
+        # Default
+        if line.startswith('•') or line.startswith('-'):
+            clean = re.sub(r'^[•\-]\s*', '', line)
+            story.append(b(clean))
         else:
-            safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(safe_line, body_s))
+            story.append(Paragraph(safe(line), body_s))
+        i += 1
 
     doc.build(story)
     buffer.seek(0)
@@ -196,12 +313,6 @@ st.markdown("""
         font-size: 50px;
         color: #00ff00;
     }
-    .download-btn > button {
-        background-color: #1a56db !important;
-        color: white !important;
-        font-weight: bold !important;
-        border-radius: 8px !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -248,9 +359,7 @@ if submit:
         st.error("❌ Please upload your resume PDF first!")
     else:
         with st.spinner("🤖 AI is scanning your resume... please wait!"):
-
             response_text = ""
-
             try:
                 # Step 1: Extract PDF text
                 resume_text = input_pdf_text(uploaded_file)
@@ -276,14 +385,12 @@ if submit:
                 if response_text.startswith("ERROR:") or response_text.startswith("EXCEPTION:"):
                     st.error(f"🚨 API Error: {response_text}")
                     st.markdown("**Possible fixes:**")
-                    st.markdown("- Make sure you used a fresh Gmail account")
                     st.markdown("- Check your API key at [aistudio.google.com](https://aistudio.google.com)")
                     st.markdown("- Try again after a few minutes")
                     st.stop()
 
                 # Step 5: Clean and parse JSON
                 cleaned = clean_json_response(response_text)
-
                 if not cleaned:
                     st.error("❌ Response was empty after cleaning.")
                     st.stop()
@@ -294,11 +401,9 @@ if submit:
                 st.markdown("---")
                 st.markdown("## 📊 Analysis Results")
 
-                # ATS Score
                 score = res_json.get("ATS Score", "N/A")
                 st.metric(label="🎯 ATS Compatibility Score", value=score)
 
-                # Score color indicator
                 try:
                     score_val = int(score.replace("%", "").strip())
                     if score_val >= 80:
@@ -312,9 +417,7 @@ if submit:
 
                 st.markdown("---")
 
-                # Strengths & Weaknesses
                 col1, col2 = st.columns(2)
-
                 with col1:
                     st.subheader("✅ Key Strengths")
                     strengths = res_json.get("Strengths", [])
@@ -335,7 +438,6 @@ if submit:
 
                 st.markdown("---")
 
-                # Missing Keywords
                 st.subheader("🔍 Missing Critical Keywords")
                 keywords = res_json.get("Missing Keywords", [])
                 if keywords:
@@ -350,7 +452,6 @@ if submit:
 
                 st.markdown("---")
 
-                # Suggestions
                 st.subheader("💡 Expert Suggestions")
                 suggestions = res_json.get("Suggestions", [])
                 if suggestions:
@@ -361,11 +462,11 @@ if submit:
 
                 st.markdown("---")
 
-                # ✨ NEW FEATURE — Optimized Resume Download
+                # ✨ Optimized Resume Download
                 st.markdown("## ✨ Download Optimized Resume")
-                st.markdown("AI will rewrite your resume with missing keywords and suggestions applied — **your background and formatting stays the same.**")
+                st.markdown("AI rewrites your resume with missing keywords naturally added — same structure, same background.")
 
-                with st.spinner("✍️ Generating your optimized resume..."):
+                with st.spinner("✍️ Generating optimized resume..."):
                     try:
                         optimized_text = get_optimized_resume_text(
                             resume_text,
@@ -374,10 +475,7 @@ if submit:
                             suggestions if suggestions else []
                         )
 
-                        pdf_buffer = generate_optimized_pdf(
-                            optimized_text,
-                            uploaded_file.name
-                        )
+                        pdf_buffer = generate_optimized_pdf(optimized_text)
 
                         original_name = uploaded_file.name.replace(".pdf", "")
                         download_filename = f"{original_name}_optimized.pdf"
@@ -389,9 +487,8 @@ if submit:
                             mime="application/pdf",
                             use_container_width=True
                         )
-
                         st.success("✅ Optimized resume ready! Click above to download.")
-                        st.caption("💡 The optimized resume has the same content — keywords and suggestions are naturally woven in.")
+                        st.caption("💡 Same content — keywords and suggestions naturally added.")
 
                     except Exception as e:
                         st.error(f"❌ Could not generate optimized resume: {str(e)}")
