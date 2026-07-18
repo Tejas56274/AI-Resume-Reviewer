@@ -71,13 +71,14 @@ def get_optimized_resume_text(resume_text, jd_context, missing_keywords, suggest
     prompt = f"""
 You are an expert resume writer. Rewrite the following resume into a modern, highly optimized, ATS-friendly single-page resume layout following these specific requirements:
 
-1. STRUCTURE & FACTUALITY:
-   - Keep the EXACT same section order and structure as the original resume.
-   - Retain only factual information. Never invent background, experience, projects, or metrics.
+1. STRUCTURE & BACKGROUND (STRICT RETENTION):
+   - Keep the EXACT same background, experience history, job roles, educational details, certifications, and timelines.
+   - Retain the exact same section order and structure as the original resume.
+   - Retain only factual information. Never invent background, experience, projects, metrics, or personal milestones.
    - Keep all links and URLs completely unchanged.
 
 2. OPTIMIZATION:
-   - Naturally incorporate these missing keywords: {', '.join(missing_keywords)}
+   - Naturally incorporate these missing keywords without changing your actual background facts: {', '.join(missing_keywords)}
    - Address these professional suggestions: {'; '.join(suggestions)}
    - Eliminate redundant phrasing, low-impact adjectives, and wordy explanations.
 
