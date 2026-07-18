@@ -3,6 +3,13 @@ import google.generativeai as genai
 import PyPDF2 as pdf
 import json
 import re
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+import io
 
 # --- Configuration ---
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
@@ -42,33 +49,105 @@ def get_working_model():
 
 def get_ai_response(input_text, pdf_content, prompt):
     full_prompt = f"Job Context: {input_text}\n\nResume:\n{pdf_content}\n\nInstructions:\n{prompt}"
-
     model_name = get_working_model()
-    st.info(f"🤖 Using model: **{model_name}**")
-
+    st.info(f"Using model: **{model_name}**")
     try:
         model = genai.GenerativeModel(
             model_name=model_name,
             generation_config={"response_mime_type": "application/json"}
         )
         response = model.generate_content(full_prompt)
-
         if not response.candidates:
             return "ERROR: No response received. API key may be invalid."
-
         candidate = response.candidates[0]
         finish_reason = str(candidate.finish_reason)
-
         if finish_reason not in ("FinishReason.STOP", "1", "STOP"):
             return f"ERROR: Response blocked. Reason: {finish_reason}"
-
         if not candidate.content or not candidate.content.parts:
             return f"ERROR: Empty response. Finish reason: {finish_reason}"
-
         return candidate.content.parts[0].text
-
     except Exception as e:
         return f"EXCEPTION: {str(e)}"
+
+def get_optimized_resume_text(resume_text, jd_context, missing_keywords, suggestions):
+    """Ask Gemini to rewrite resume with optimized content."""
+    prompt = f"""
+You are an expert resume writer. Rewrite the following resume to:
+1. Naturally incorporate these missing keywords: {', '.join(missing_keywords)}
+2. Apply these suggestions: {'; '.join(suggestions)}
+3. Keep the same structure, format, and person's actual experience — do NOT fabricate anything
+4. Return ONLY the optimized resume text, no explanations
+
+Job Description Context: {jd_context}
+
+Original Resume:
+{resume_text}
+"""
+    model_name = get_working_model()
+    try:
+        model = genai.GenerativeModel(model_name=model_name)
+        response = model.generate_content(prompt)
+        if response.candidates and response.candidates[0].content.parts:
+            return response.candidates[0].content.parts[0].text
+        return resume_text
+    except Exception:
+        return resume_text
+
+def generate_optimized_pdf(optimized_text, original_filename):
+    """Generate a clean PDF from optimized resume text."""
+    buffer = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.6 * inch,
+        leftMargin=0.6 * inch,
+        topMargin=0.6 * inch,
+        bottomMargin=0.6 * inch
+    )
+
+    DARK = colors.HexColor("#111111")
+    BLUE = colors.HexColor("#1a56db")
+    GRAY = colors.HexColor("#444444")
+
+    def S(name, **kw):
+        base = dict(fontName="Helvetica", fontSize=10, textColor=GRAY, leading=14, spaceAfter=4)
+        base.update(kw)
+        return ParagraphStyle(name, **base)
+
+    body_s = S("body", alignment=TA_JUSTIFY)
+    heading_s = S("heading", fontName="Helvetica-Bold", fontSize=13, textColor=DARK,
+                  spaceBefore=10, spaceAfter=4)
+    subheading_s = S("subheading", fontName="Helvetica-Bold", fontSize=10.5,
+                     textColor=BLUE, spaceBefore=6, spaceAfter=2)
+    bullet_s = S("bullet", leftIndent=14, firstLineIndent=-14, spaceAfter=2)
+
+    story = []
+    lines = optimized_text.split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            story.append(Spacer(1, 6))
+            continue
+
+        # Detect section headings (ALL CAPS or ends with :)
+        if line.isupper() and len(line) > 3:
+            story.append(Paragraph(line, heading_s))
+            story.append(HRFlowable(width="100%", thickness=0.8, color=BLUE,
+                                    spaceBefore=1, spaceAfter=4))
+        elif line.endswith(':') and len(line) < 40:
+            story.append(Paragraph(line, subheading_s))
+        elif line.startswith('•') or line.startswith('-') or line.startswith('*'):
+            clean = line.lstrip('•-* ').strip()
+            story.append(Paragraph(f"• {clean}", bullet_s))
+        else:
+            safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            story.append(Paragraph(safe_line, body_s))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 def input_pdf_text(uploaded_file):
     reader = pdf.PdfReader(uploaded_file)
@@ -79,7 +158,7 @@ def input_pdf_text(uploaded_file):
             text += extracted
     return text
 
-# --- Prompt ---
+# --- Prompts ---
 input_prompt = """
 You are an expert HR Manager with 20 years of experience in tech recruitment.
 Analyze the provided resume carefully against the job context given.
@@ -117,12 +196,18 @@ st.markdown("""
         font-size: 50px;
         color: #00ff00;
     }
+    .download-btn > button {
+        background-color: #1a56db !important;
+        color: white !important;
+        font-weight: bold !important;
+        border-radius: 8px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
 # --- Header ---
 st.title("🚀 AI Resume Reviewer")
-st.subheader("ATS Scoring powered by Google Gemini")
+st.subheader("ATS Scoring + Optimized Resume Download powered by Google Gemini")
 st.write("Boost your resume impact and get placement ready!")
 
 # --- Sidebar ---
@@ -138,8 +223,8 @@ with st.sidebar:
     st.markdown("**How it works:**")
     st.markdown("1. Upload your resume PDF")
     st.markdown("2. Enter the job description")
-    st.markdown("3. Click the Analyze button")
-    st.markdown("4. Get detailed feedback")
+    st.markdown("3. Click Analyze button")
+    st.markdown("4. Get ATS score + download optimized resume")
 
 # --- File Upload ---
 st.markdown("### 📄 Upload Your Resume")
@@ -273,6 +358,44 @@ if submit:
                         st.info(f"**{i}.** {sug}")
                 else:
                     st.info("No additional suggestions.")
+
+                st.markdown("---")
+
+                # ✨ NEW FEATURE — Optimized Resume Download
+                st.markdown("## ✨ Download Optimized Resume")
+                st.markdown("AI will rewrite your resume with missing keywords and suggestions applied — **your background and formatting stays the same.**")
+
+                with st.spinner("✍️ Generating your optimized resume..."):
+                    try:
+                        optimized_text = get_optimized_resume_text(
+                            resume_text,
+                            jd_context,
+                            keywords if keywords else [],
+                            suggestions if suggestions else []
+                        )
+
+                        pdf_buffer = generate_optimized_pdf(
+                            optimized_text,
+                            uploaded_file.name
+                        )
+
+                        original_name = uploaded_file.name.replace(".pdf", "")
+                        download_filename = f"{original_name}_optimized.pdf"
+
+                        st.download_button(
+                            label="📥 Download Optimized Resume (PDF)",
+                            data=pdf_buffer,
+                            file_name=download_filename,
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+
+                        st.success("✅ Optimized resume ready! Click above to download.")
+                        st.caption("💡 The optimized resume has the same content — keywords and suggestions are naturally woven in.")
+
+                    except Exception as e:
+                        st.error(f"❌ Could not generate optimized resume: {str(e)}")
+                        st.info("Your ATS analysis above is still complete and accurate.")
 
                 st.markdown("---")
                 st.caption("✨ Powered by Google Gemini | Built with Streamlit")
