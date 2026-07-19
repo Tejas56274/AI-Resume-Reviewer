@@ -1,14 +1,3 @@
-Bhai, samajh gaya! Naye reference image ko dekh kar pata chal raha hai ki tumhara layout change ho chuka hai:
-
-1. **Live Demo Links Gayab Hain**: Naye wale design mein projects ke niche standalone "Live Demo: URL" ki alag line nahi hai! Instead, **Project Title** khud ek clickable link hai jo bold aur blue color (`#1a56db`) mein direct display ho raha hai.
-2. **Bullets and Spacing**: Bullets normal standard dots (`•`) hain, square blocks nahi. Projects ki sub-headings/tech-stacks directly remove ho chuki hain, aur alignment complete left-aligned hai.
-3. **Certifications Dates**: Certification names left side par hain aur unki dates pure right-aligned (`Mar 2026 – Apr 2026`) horizontal plane par parallel hain.
-
-Maine tumhare `generate_optimized_pdf` aur `get_optimized_resume_text` ke layout generator ko poori tarah se badal diya hai taaki matches **100% exact** ho sakein.
-
-Yeh rha updated script code:
-
-```python
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2 as pdf
@@ -345,5 +334,3 @@ if submit:
 
             except Exception as e:
                 st.error(f"❌ Unexpected Error: {str(e)}")
-
-```
