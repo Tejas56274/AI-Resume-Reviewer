@@ -72,10 +72,9 @@ def get_optimized_resume_text(resume_text, jd_context, missing_keywords, suggest
 You are an expert resume writer. Rewrite the following resume into a modern, highly optimized, ATS-friendly single-page resume layout following these specific requirements:
 
 1. STRUCTURE & BACKGROUND (STRICT RETENTION):
-   - Keep the EXACT same background, experience history, job roles, educational details, certifications, and timelines.
-   - Retain the exact same section order and structure as the original resume.
-   - Retain only factual information. Never invent background, experience, projects, metrics, or personal milestones.
-   - Keep all links and URLs completely unchanged.
+   - Keep the EXACT same background context, experience details, project milestones, metrics, certifications, and academic background unchanged.
+   - Do not change or invent factual career timelines or achievements.
+   - Keep the exact section structures, order, and URLs as provided.
 
 2. OPTIMIZATION:
    - Naturally incorporate these missing keywords without changing your actual background facts: {', '.join(missing_keywords)}
@@ -110,8 +109,8 @@ Original Resume:
 
 def linkify_text(text):
     """
-    Identifies HTTP/HTTPS links, GitHub, LinkedIn, and Streamlit domains 
-    and converts them into standard HTML anchor tags for ReportLab Paragraph compatibility.
+    Identifies HTTP/HTTPS links, GitHub, LinkedIn, and Streamlit domains
+    and converts them into clickable anchor links matching the design precisely.
     """
     url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|(?:github\.com|linkedin\.com|streamlit\.app)/[^\s<>"]*)'
     
@@ -128,41 +127,30 @@ def linkify_text(text):
 def generate_optimized_pdf(optimized_text):
     buffer = io.BytesIO()
 
-    # Pre-parse lines to estimate content size for smart compression adjustment
+    # Pre-parse lines to track text complexity for Dynamic Spacing & Typography
     lines = [l.strip() for l in optimized_text.split('\n')]
     non_empty_lines = [l for l in lines if l]
     total_chars = sum(len(l) for l in non_empty_lines)
 
-    # Smart Overflow Algorithm Configuration
-    # Adjust variables depending on text volume to proactively prevent 2-page leaks
-    if total_chars > 2200:
+    # Smart Spacing Scaling Configurator
+    if total_chars > 2000:
         base_font = 8.0
         base_leading = 10.5
-        margin_x = 36  # 0.5 inch
-        margin_y = 28  # ~0.4 inch
-        sec_space_before = 3
+        margin_x = 36  # 0.5 in
+        margin_y = 28
+        sec_space_before = 4
         sec_space_after = 1
-        line_thickness = 0.5
-    elif total_chars > 1600:
+    else:
         base_font = 8.5
         base_leading = 11.5
         margin_x = 36
-        margin_y = 36  # 0.5 inch
-        sec_space_before = 4
-        sec_space_after = 1
-        line_thickness = 0.6
-    else:
-        base_font = 9.5
-        base_leading = 13.0
-        margin_x = 45  # ~0.6 inch
-        margin_y = 45
-        sec_space_before = 6
+        margin_y = 36  # 0.5 in
+        sec_space_before = 5
         sec_space_after = 2
-        line_thickness = 0.8
 
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=A4, # Professional standard sizing
+        pagesize=A4,
         rightMargin=margin_x,
         leftMargin=margin_x,
         topMargin=margin_y,
@@ -171,7 +159,7 @@ def generate_optimized_pdf(optimized_text):
 
     DARK = colors.HexColor("#111111")
     BLUE = colors.HexColor("#1a56db")
-    GRAY = colors.HexColor("#374151") # Cleaner Resume.io styled charcoal gray
+    GRAY = colors.HexColor("#374151") 
 
     def S(name, **kw):
         base = dict(fontName="Helvetica", fontSize=base_font,
@@ -179,20 +167,20 @@ def generate_optimized_pdf(optimized_text):
         base.update(kw)
         return ParagraphStyle(name, **base)
 
-    name_s    = S("n", fontName="Helvetica-Bold", fontSize=base_font + 8, textColor=DARK,
-                  alignment=TA_CENTER, spaceAfter=1, leading=base_leading + 8)
+    name_s    = S("n", fontName="Helvetica-Bold", fontSize=base_font + 7, textColor=DARK,
+                  alignment=TA_CENTER, spaceAfter=1, leading=base_leading + 6)
     contact_s = S("c", fontSize=base_font - 0.5, textColor=GRAY,
                   alignment=TA_CENTER, spaceAfter=3, leading=base_leading)
     sec_s     = S("sec", fontName="Helvetica-Bold", fontSize=base_font + 0.5, textColor=DARK,
                   spaceBefore=sec_space_before, spaceAfter=sec_space_after)
     proj_s    = S("proj", fontName="Helvetica-Bold", fontSize=base_font, textColor=DARK,
-                  spaceBefore=sec_space_before - 1, spaceAfter=0)
+                  spaceBefore=sec_space_before - 2, spaceAfter=0)
     stack_s   = S("stack", fontName="Helvetica-Oblique", fontSize=base_font - 0.5,
-                  textColor=BLUE, spaceAfter=0.5)
+                  textColor=BLUE, spaceAfter=1)
     body_s    = S("body", fontSize=base_font, textColor=GRAY,
                   leading=base_leading, spaceAfter=1, alignment=TA_JUSTIFY)
     bul_s     = S("bul", fontSize=base_font, textColor=GRAY, leading=base_leading,
-                  leftIndent=12, firstLineIndent=-12, spaceAfter=1, alignment=TA_JUSTIFY)
+                  leftIndent=14, firstLineIndent=-14, spaceAfter=1.5, alignment=TA_JUSTIFY)
     skill_s   = S("sk", fontSize=base_font, textColor=GRAY, leading=base_leading, spaceAfter=1)
 
     SECTIONS = [
@@ -201,7 +189,7 @@ def generate_optimized_pdf(optimized_text):
     ]
 
     def hr():
-        return HRFlowable(width="100%", thickness=line_thickness, color=colors.HexColor("#E5E7EB"),
+        return HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#D1D5DB"),
                           spaceBefore=1, spaceAfter=3)
 
     def safe(text):
@@ -217,7 +205,7 @@ def generate_optimized_pdf(optimized_text):
 
     for raw in lines:
         line = raw.strip()
-        line = re.sub(r'\*\*', '', line) # Keep plain text
+        line = re.sub(r'\*\*', '', line)
 
         if not line:
             continue
@@ -228,22 +216,22 @@ def generate_optimized_pdf(optimized_text):
             name_done = True
             continue
 
-        # Header Contact Formatting
+        # Header Contact Metadata Parsing
         if not contact_done:
             story.append(Paragraph(linkify_text(safe(line)), contact_s))
             contact_done = True
             continue
 
-        # Section Heading Catching
+        # Base Section Router
         upper = line.upper().rstrip('.')
         if upper in SECTIONS:
             story.append(Paragraph(safe(line.upper()), sec_s))
             story.append(hr())
             current_section = upper
-            project_counts = 0 # reset tracking counters per section
+            project_counts = 0
             continue
 
-        # Technical Skills Content Processing
+        # Technical Skills Rendering Flow
         if current_section == "TECHNICAL SKILLS":
             if ':' in line:
                 parts = line.split(':', 1)
@@ -254,31 +242,36 @@ def generate_optimized_pdf(optimized_text):
                 story.append(Paragraph(linkify_text(safe(line)), skill_s))
             continue
 
-        # Project Specific Bullet Reduction Architecture
+        # Custom Project Aggregator Matching Layout
         if current_section == "PROJECTS":
-            if line.startswith('•') or line.startswith('-') or line.startswith('*'):
-                if bullet_counts >= 2: # Keep layout tight and clean by skipping overflow project points
+            if line.startswith('•') or line.startswith('-') or line.startswith('■') or line.startswith('*'):
+                if bullet_counts >= 2:
                     continue
-                clean = re.sub(r'^[•\-\*]\s*', '', line)
-                story.append(Paragraph(f"&bull; {linkify_text(safe(clean))}", bul_s))
+                clean = re.sub(r'^[•\-\*■]\s*', '', line)
+                story.append(Paragraph(f"&#9632;  {linkify_text(safe(clean))}", bul_s))
                 bullet_counts += 1
                 continue
-            if '·' in line or '|' in line:
-                story.append(Paragraph(linkify_text(safe(line)), stack_s))
+            
+            # Subtitle check (Contains space separation or classic indicators)
+            if ('·' in line or '–' in line or '|' in line or line.startswith('Python') or line.startswith('n8n')) and not line.endswith('.'):
+                formatted_stack = line.replace(' - ', ' · ').replace('   ', ' · ').replace('  ', ' · ')
+                story.append(Paragraph(safe(formatted_stack), stack_s))
                 continue
+            
+            # Project Header Title
             if len(line) < 80 and line[0].isupper() and not line.endswith('.'):
-                if project_counts >= 5: # Smart limit check
-                    bullet_counts = 2 # skip subsequent project lines
+                if project_counts >= 5:
+                    bullet_counts = 2
                     continue
                 story.append(Paragraph(linkify_text(safe(line)), proj_s))
                 project_counts += 1
-                bullet_counts = 0 # reset bullet count tracker for the new current project
+                bullet_counts = 0
                 continue
 
-        # Generic Section Parsing Flow
-        if line.startswith('•') or line.startswith('-') or line.startswith('*'):
-            clean = re.sub(r'^[•\-\*]\s*', '', line)
-            story.append(Paragraph(f"&bull; {linkify_text(safe(clean))}", bul_s))
+        # Generic Document Section Router Engine
+        if line.startswith('•') or line.startswith('-') or line.startswith('■') or line.startswith('*'):
+            clean = re.sub(r'^[•\-\*■]\s*', '', line)
+            story.append(Paragraph(f"&#9632;  {linkify_text(safe(clean))}", bul_s))
         else:
             story.append(Paragraph(linkify_text(safe(line)), body_s))
 
