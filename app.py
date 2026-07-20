@@ -3,11 +3,12 @@ import google.generativeai as genai
 import PyPDF2 as pdf
 import json
 import re
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
+from reportlab.lib.units import inch, cm
 import io
 
 # --- Configuration ---
@@ -56,43 +57,33 @@ def get_ai_response(input_text, pdf_content, prompt):
         )
         response = model.generate_content(full_prompt)
         if not response.candidates:
-            return "ERROR: No response received. API key may be invalid."
+            return "ERROR: No response received."
         candidate = response.candidates[0]
         finish_reason = str(candidate.finish_reason)
         if finish_reason not in ("FinishReason.STOP", "1", "STOP"):
             return f"ERROR: Response blocked. Reason: {finish_reason}"
         if not candidate.content or not candidate.content.parts:
-            return f"ERROR: Empty response. Finish reason: {finish_reason}"
+            return f"ERROR: Empty response."
         return candidate.content.parts[0].text
     except Exception as e:
         return f"EXCEPTION: {str(e)}"
 
 def get_optimized_resume_text(resume_text, jd_context, missing_keywords, suggestions):
     prompt = f"""
-You are an expert resume writer. Rewrite the following resume into a modern, highly optimized, ATS-friendly single-page resume layout following these specific requirements:
+You are an expert resume writer. Rewrite the following resume to achieve 90%+ ATS score.
 
-1. STRUCTURE & BACKGROUND (STRICT RETENTION):
-   - Keep the EXACT same background context, experience details, project milestones, metrics, certifications, and academic background unchanged.
-   - Do not change or invent factual career timelines or achievements.
-   - Keep the exact section structures, order, and URLs as provided.
+STRICT RULES:
+1. Keep EXACT same sections in this ORDER: Name, Contact, Professional Summary, Education, Certifications, Technical Skills, Projects
+2. Keep ALL project names, certifications, education facts unchanged
+3. Keep ALL live demo links exactly as they are
+4. Incorporate these missing keywords naturally: {', '.join(missing_keywords)}
+5. Apply these suggestions: {'; '.join(suggestions)}
+6. Do NOT use markdown bold (**text**) — plain text only
+7. Max 2 bullet points per project
+8. Professional Summary: max 3 lines
+9. Return ONLY resume text, no explanations
 
-2. OPTIMIZATION:
-   - Naturally incorporate these missing keywords without changing your actual background facts: {', '.join(missing_keywords)}
-   - Address these professional suggestions: {'; '.join(suggestions)}
-   - Eliminate redundant phrasing, low-impact adjectives, and wordy explanations.
-
-3. DENSITY & SIZE RESTRICTIONS (STRICT ONE-PAGE TARGET):
-   - Total length must NOT exceed 500 words.
-   - The Professional Summary must be a maximum of 2 lines.
-   - Include a maximum of 5 projects.
-   - Restrict each project to a maximum of 2 highly impactful bullet points.
-   - Trim repetitive bullet points across experience or accomplishments.
-
-4. FORMATTING RULES:
-   - Do NOT use markdown bold (**text**) inside the text bodies.
-   - Return ONLY the clean resume text line-by-line, with absolutely no preamble, markdown code blocks, or conversational text.
-
-Job Description Context: {jd_context}
+Job Description: {jd_context}
 
 Original Resume:
 {resume_text}
@@ -107,173 +98,247 @@ Original Resume:
     except Exception:
         return resume_text
 
-def linkify_text(text):
-    """
-    Identifies HTTP/HTTPS links, GitHub, LinkedIn, and Streamlit domains
-    and converts them into clickable anchor links matching the design precisely.
-    """
-    url_pattern = r'(https?://[^\s<>"]+|www\.[^\s<>"]+|(?:github\.com|linkedin\.com|streamlit\.app)/[^\s<>"]*)'
-    
+def safe(text):
+    return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+def linkify(text):
+    """Convert URLs to clickable blue links."""
+    url_pattern = r'(https?://[^\s<>"]+|(?:github\.com|linkedin\.com|streamlit\.app|wellfound\.com)[^\s<>"]*)'
     def replace_url(match):
         url = match.group(0)
-        href = url
-        if not url.startswith(('http://', 'https://')):
-            href = 'https://' + url
-        clean_url = url.replace('https://', '').replace('http://', '').replace('www.', '')
-        return f'<a href="{href}" color="#1a56db"><u>{clean_url}</u></a>'
-        
+        href = url if url.startswith('http') else f'https://{url}'
+        display = url.replace('https://','').replace('http://','')
+        return f'<a href="{href}" color="#2563EB"><u>{safe(display)}</u></a>'
     return re.sub(url_pattern, replace_url, text)
 
 def generate_optimized_pdf(optimized_text):
     buffer = io.BytesIO()
 
-    # Pre-parse lines to track text complexity for Dynamic Spacing & Typography
-    lines = [l.strip() for l in optimized_text.split('\n')]
-    non_empty_lines = [l for l in lines if l]
-    total_chars = sum(len(l) for l in non_empty_lines)
-
-    # Smart Spacing Scaling Configurator
-    if total_chars > 2000:
-        base_font = 8.0
-        base_leading = 10.5
-        margin_x = 36  # 0.5 in
-        margin_y = 28
-        sec_space_before = 4
-        sec_space_after = 1
-    else:
-        base_font = 8.5
-        base_leading = 11.5
-        margin_x = 36
-        margin_y = 36  # 0.5 in
-        sec_space_before = 5
-        sec_space_after = 2
+    PAGE_W, PAGE_H = A4
+    MARGIN = 1.8 * cm
 
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        rightMargin=margin_x,
-        leftMargin=margin_x,
-        topMargin=margin_y,
-        bottomMargin=margin_y
+        rightMargin=MARGIN,
+        leftMargin=MARGIN,
+        topMargin=1.2 * cm,
+        bottomMargin=1.2 * cm
     )
 
-    DARK = colors.HexColor("#111111")
-    BLUE = colors.HexColor("#1a56db")
-    GRAY = colors.HexColor("#374151") 
+    # Colors — matching Image 2
+    BLACK  = colors.HexColor("#111827")
+    BLUE   = colors.HexColor("#2563EB")
+    GRAY   = colors.HexColor("#374151")
+    LGRAY  = colors.HexColor("#6B7280")
+    DIVIDER= colors.HexColor("#D1D5DB")
+
+    BF = 8.8   # base font
+    BL = 12.0  # base leading
 
     def S(name, **kw):
-        base = dict(fontName="Helvetica", fontSize=base_font,
-                    textColor=GRAY, leading=base_leading, spaceAfter=0)
+        base = dict(fontName="Helvetica", fontSize=BF, textColor=GRAY,
+                    leading=BL, spaceAfter=0, spaceBefore=0)
         base.update(kw)
         return ParagraphStyle(name, **base)
 
-    name_s    = S("n", fontName="Helvetica-Bold", fontSize=base_font + 7, textColor=DARK,
-                  alignment=TA_CENTER, spaceAfter=1, leading=base_leading + 6)
-    contact_s = S("c", fontSize=base_font - 0.5, textColor=GRAY,
-                  alignment=TA_CENTER, spaceAfter=3, leading=base_leading)
-    sec_s     = S("sec", fontName="Helvetica-Bold", fontSize=base_font + 0.5, textColor=DARK,
-                  spaceBefore=sec_space_before, spaceAfter=sec_space_after)
-    proj_s    = S("proj", fontName="Helvetica-Bold", fontSize=base_font, textColor=DARK,
-                  spaceBefore=sec_space_before - 2, spaceAfter=0)
-    stack_s   = S("stack", fontName="Helvetica-Oblique", fontSize=base_font - 0.5,
-                  textColor=BLUE, spaceAfter=1)
-    body_s    = S("body", fontSize=base_font, textColor=GRAY,
-                  leading=base_leading, spaceAfter=1, alignment=TA_JUSTIFY)
-    bul_s     = S("bul", fontSize=base_font, textColor=GRAY, leading=base_leading,
-                  leftIndent=14, firstLineIndent=-14, spaceAfter=1.5, alignment=TA_JUSTIFY)
-    skill_s   = S("sk", fontSize=base_font, textColor=GRAY, leading=base_leading, spaceAfter=1)
+    # Styles — matching Image 2 exactly
+    name_s    = S("nm", fontName="Helvetica-Bold", fontSize=20, textColor=BLACK,
+                  alignment=TA_CENTER, spaceAfter=4, leading=24)
+    contact_s = S("ct", fontSize=8, textColor=LGRAY,
+                  alignment=TA_CENTER, spaceAfter=2, leading=11)
+    sec_s     = S("sc", fontName="Helvetica-Bold", fontSize=9.5, textColor=BLACK,
+                  spaceBefore=10, spaceAfter=3, leading=12)
+    body_s    = S("bd", fontSize=BF, textColor=GRAY,
+                  leading=BL, spaceAfter=2, alignment=TA_JUSTIFY)
+    bul_s     = S("bl", fontSize=BF, textColor=GRAY, leading=BL,
+                  leftIndent=12, firstLineIndent=-12, spaceAfter=2)
+    proj_s    = S("pj", fontName="Helvetica-Bold", fontSize=BF+0.3, textColor=BLUE,
+                  spaceBefore=6, spaceAfter=1)
+    stack_s   = S("st", fontSize=BF-0.5, textColor=LGRAY, spaceAfter=2)
+    skill_s   = S("sk", fontSize=BF, textColor=GRAY, leading=BL, spaceAfter=2)
+    cert_name_s = S("cn", fontName="Helvetica-Bold", fontSize=BF, textColor=BLACK,
+                    spaceAfter=0, spaceBefore=3)
+    cert_sub_s  = S("cs", fontSize=BF-0.5, textColor=LGRAY, spaceAfter=4, fontName="Helvetica-Oblique")
+    edu_name_s  = S("en", fontName="Helvetica-Bold", fontSize=BF+0.5, textColor=BLACK,
+                    spaceAfter=1, spaceBefore=3)
+    edu_sub_s   = S("es", fontSize=BF-0.5, textColor=LGRAY, fontName="Helvetica-Oblique", spaceAfter=2)
+    link_s      = S("lk", fontSize=BF, textColor=BLUE, leading=BL, spaceAfter=2,
+                    leftIndent=12, firstLineIndent=-12)
+
+    def hr(thick=0.5, color=DIVIDER, before=1, after=4):
+        return HRFlowable(width="100%", thickness=thick, color=color,
+                          spaceBefore=before, spaceAfter=after)
+
+    def bullet(text):
+        processed = linkify(safe(text))
+        return Paragraph(f"• {processed}", bul_s)
 
     SECTIONS = [
         "PROFESSIONAL SUMMARY", "TECHNICAL SKILLS", "PROJECTS",
-        "CERTIFICATIONS", "EDUCATION", "EXPERIENCE", "ACHIEVEMENTS", "SKILLS", "SUMMARY"
+        "CERTIFICATIONS", "EDUCATION", "EXPERIENCE", "ACHIEVEMENTS",
+        "SKILLS", "SUMMARY"
     ]
 
-    def hr():
-        return HRFlowable(width="100%", thickness=0.6, color=colors.HexColor("#D1D5DB"),
-                          spaceBefore=1, spaceAfter=3)
-
-    def safe(text):
-        return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
     story = []
+    lines = [l.strip() for l in optimized_text.split('\n')]
+    # Remove markdown bold
+    lines = [re.sub(r'\*\*', '', l) for l in lines]
+
     name_done = False
     contact_done = False
     current_section = None
-    
-    project_counts = 0
-    bullet_counts = 0
+    i = 0
 
-    for raw in lines:
-        line = raw.strip()
-        line = re.sub(r'\*\*', '', line)
+    # Buffer for certifications (name + issuer + date on same row)
+    cert_buffer = []
+
+    def flush_certs():
+        nonlocal cert_buffer
+        for cb in cert_buffer:
+            story.append(Paragraph(safe(cb['name']), cert_name_s))
+            if cb.get('sub'):
+                story.append(Paragraph(safe(cb['sub']), cert_sub_s))
+        cert_buffer = []
+
+    while i < len(lines):
+        line = lines[i]
 
         if not line:
+            i += 1
             continue
 
-        # Header Name Parsing
+        # Name
         if not name_done:
-            story.append(Paragraph(linkify_text(safe(line)), name_s))
+            story.append(Paragraph(safe(line), name_s))
             name_done = True
+            i += 1
             continue
 
-        # Header Contact Metadata Parsing
+        # Contact line — icons style like Image 2
         if not contact_done:
-            story.append(Paragraph(linkify_text(safe(line)), contact_s))
+            # Build contact with separators
+            parts = [p.strip() for p in re.split(r'\s*[\|•]\s*', line)]
+            contact_parts = []
+            for part in parts:
+                if not part:
+                    continue
+                # Check if URL
+                if any(x in part.lower() for x in ['github', 'linkedin', 'streamlit', 'wellfound', 'http']):
+                    url = part if part.startswith('http') else f'https://{part}'
+                    label = part.replace('https://','').replace('http://','')
+                    contact_parts.append(f'<a href="{url}" color="#2563EB">{safe(label)}</a>')
+                else:
+                    contact_parts.append(safe(part))
+            story.append(Paragraph('   ·   '.join(contact_parts), contact_s))
+            story.append(hr(thick=1.0, color=BLACK, before=4, after=6))
             contact_done = True
+            i += 1
             continue
 
-        # Base Section Router
-        upper = line.upper().rstrip('.')
+        # Section heading
+        upper = line.upper().strip().rstrip('.')
         if upper in SECTIONS:
-            story.append(Paragraph(safe(line.upper()), sec_s))
-            story.append(hr())
+            if current_section == "CERTIFICATIONS":
+                flush_certs()
+            story.append(Paragraph(line.upper(), sec_s))
+            story.append(hr(thick=0.5, color=DIVIDER, before=1, after=4))
             current_section = upper
-            project_counts = 0
+            i += 1
             continue
 
-        # Technical Skills Rendering Flow
+        # PROFESSIONAL SUMMARY
+        if current_section == "PROFESSIONAL SUMMARY":
+            story.append(Paragraph(linkify(safe(line)), body_s))
+            i += 1
+            continue
+
+        # EDUCATION
+        if current_section == "EDUCATION":
+            if line.startswith('•') or line.startswith('-'):
+                clean = re.sub(r'^[•\-]\s*', '', line)
+                story.append(bullet(clean))
+            elif any(x in line for x in ['B.E', 'B.Tech', 'Bachelor', 'Master', 'M.Tech', 'VTU', 'University', 'College', 'BLDEA']):
+                story.append(Paragraph(linkify(safe(line)), edu_name_s))
+            elif any(x in line for x in ['20', 'Data Science', 'Computer Science', 'Engineering']):
+                story.append(Paragraph(safe(line), edu_sub_s))
+            else:
+                story.append(Paragraph(safe(line), body_s))
+            i += 1
+            continue
+
+        # CERTIFICATIONS
+        if current_section == "CERTIFICATIONS":
+            clean = re.sub(r'^[•\-]\s*', '', line)
+            # Try to detect cert name vs issuer/date
+            if any(x in clean for x in ['Forage', 'NPTEL', 'be10x', 'Coursera', 'Google', 'Microsoft', 'AWS', 'View']):
+                if cert_buffer:
+                    cert_buffer[-1]['sub'] = cert_buffer[-1].get('sub', '') + clean
+            else:
+                # New cert entry
+                cert_buffer.append({'name': clean, 'sub': ''})
+            i += 1
+            continue
+
+        # TECHNICAL SKILLS
         if current_section == "TECHNICAL SKILLS":
             if ':' in line:
                 parts = line.split(':', 1)
                 label = safe(parts[0].strip())
-                val = safe(parts[1].strip())
-                story.append(Paragraph(f"<b>{label}:</b> {linkify_text(val)}", skill_s))
+                val = linkify(safe(parts[1].strip()))
+                story.append(Paragraph(f"<b>{label}:</b> {val}", skill_s))
             else:
-                story.append(Paragraph(linkify_text(safe(line)), skill_s))
+                story.append(Paragraph(linkify(safe(line)), skill_s))
+            i += 1
             continue
 
-        # Custom Project Aggregator Matching Layout
+        # PROJECTS
         if current_section == "PROJECTS":
-            if line.startswith('•') or line.startswith('-') or line.startswith('■') or line.startswith('*'):
-                if bullet_counts >= 2:
-                    continue
-                clean = re.sub(r'^[•\-\*■]\s*', '', line)
-                story.append(Paragraph(f"&#9632;  {linkify_text(safe(clean))}", bul_s))
-                bullet_counts += 1
-                continue
-            
-            # Subtitle check (Contains space separation or classic indicators)
-            if ('·' in line or '–' in line or '|' in line or line.startswith('Python') or line.startswith('n8n')) and not line.endswith('.'):
-                formatted_stack = line.replace(' - ', ' · ').replace('   ', ' · ').replace('  ', ' · ')
-                story.append(Paragraph(safe(formatted_stack), stack_s))
-                continue
-            
-            # Project Header Title
-            if len(line) < 80 and line[0].isupper() and not line.endswith('.'):
-                if project_counts >= 5:
-                    bullet_counts = 2
-                    continue
-                story.append(Paragraph(linkify_text(safe(line)), proj_s))
-                project_counts += 1
-                bullet_counts = 0
+            if line.startswith('•') or line.startswith('-') or line.startswith('*'):
+                clean = re.sub(r'^[•\-\*]\s*', '', line)
+                story.append(bullet(clean))
+                i += 1
                 continue
 
-        # Generic Document Section Router Engine
-        if line.startswith('•') or line.startswith('-') or line.startswith('■') or line.startswith('*'):
-            clean = re.sub(r'^[•\-\*■]\s*', '', line)
-            story.append(Paragraph(f"&#9632;  {linkify_text(safe(clean))}", bul_s))
+            if 'live demo' in line.lower() or 'streamlit.app' in line.lower():
+                url_match = re.search(r'(https?://\S+|[\w\-]+\.streamlit\.app\S*)', line)
+                if url_match:
+                    url = url_match.group(1)
+                    if not url.startswith('http'):
+                        url = f'https://{url}'
+                    display = url.replace('https://','')
+                    story.append(Paragraph(
+                        f'• <a href="{url}" color="#2563EB"><u>{safe(display)}</u></a>',
+                        link_s
+                    ))
+                i += 1
+                continue
+
+            if '·' in line or ('Python' in line and not line.endswith('.')):
+                story.append(Paragraph(safe(line), stack_s))
+                i += 1
+                continue
+
+            if len(line) < 80 and line[0].isupper():
+                story.append(Paragraph(linkify(safe(line)), proj_s))
+                i += 1
+                continue
+
+            story.append(Paragraph(linkify(safe(line)), body_s))
+            i += 1
+            continue
+
+        # Default
+        if line.startswith('•') or line.startswith('-'):
+            clean = re.sub(r'^[•\-]\s*', '', line)
+            story.append(bullet(clean))
         else:
-            story.append(Paragraph(linkify_text(safe(line)), body_s))
+            story.append(Paragraph(linkify(safe(line)), body_s))
+        i += 1
+
+    # Flush remaining certs
+    if current_section == "CERTIFICATIONS":
+        flush_certs()
 
     doc.build(story)
     buffer.seek(0)
@@ -327,14 +392,12 @@ st.markdown("""
         color: #00ff00;
     }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# --- Header ---
 st.title("🚀 AI Resume Reviewer")
 st.subheader("ATS Scoring + Optimized Resume Download powered by Google Gemini")
 st.write("Boost your resume impact and get placement ready!")
 
-# --- Sidebar ---
 with st.sidebar:
     st.header("⚙️ Job Settings")
     jd_context = st.text_area(
@@ -350,23 +413,18 @@ with st.sidebar:
     st.markdown("3. Click Analyze button")
     st.markdown("4. Get ATS score + download optimized resume")
 
-# --- File Upload ---
 st.markdown("### 📄 Upload Your Resume")
 uploaded_file = st.file_uploader(
-    "Upload in PDF format",
-    type=["pdf"],
-    help="Only PDF files are supported. Make sure it is not a scanned image PDF."
+    "Upload in PDF format", type=["pdf"],
+    help="Only PDF files are supported."
 )
 
 if uploaded_file:
     st.success(f"✅ File received: **{uploaded_file.name}**")
 
 st.markdown("---")
-
-# --- Analyze Button ---
 submit = st.button("🔍 Analyze My Resume", use_container_width=True)
 
-# --- Main Logic ---
 if submit:
     if uploaded_file is None:
         st.error("❌ Please upload your resume PDF first!")
@@ -374,43 +432,30 @@ if submit:
         with st.spinner("🤖 AI is scanning your resume... please wait!"):
             response_text = ""
             try:
-                # Step 1: Extract PDF text
                 resume_text = input_pdf_text(uploaded_file)
 
                 if not resume_text.strip():
                     st.error("❌ Could not extract text from the PDF.")
-                    st.warning("Possible reasons:")
-                    st.markdown("- The PDF is scanned or image-based")
-                    st.markdown("- The PDF is password protected")
-                    st.markdown("- The PDF file is corrupted")
                     st.stop()
 
-                st.info(f"📃 Successfully extracted **{len(resume_text)} characters** from your resume.")
+                st.info(f"📃 Extracted **{len(resume_text)} characters** from resume.")
 
-                # Step 2: Get AI response
                 response_text = get_ai_response(jd_context, resume_text, input_prompt)
 
-                # Step 3: Debug expander
                 with st.expander("🛠️ Raw API Response (Debug)", expanded=False):
                     st.code(response_text, language="json")
 
-                # Step 4: Check for errors
                 if response_text.startswith("ERROR:") or response_text.startswith("EXCEPTION:"):
                     st.error(f"🚨 API Error: {response_text}")
-                    st.markdown("**Possible fixes:**")
-                    st.markdown("- Check your API key at [aistudio.google.com](https://aistudio.google.com)")
-                    st.markdown("- Try again after a few minutes")
                     st.stop()
 
-                # Step 5: Clean and parse JSON
                 cleaned = clean_json_response(response_text)
                 if not cleaned:
-                    st.error("❌ Response was empty after cleaning.")
+                    st.error("❌ Empty response.")
                     st.stop()
 
                 res_json = json.loads(cleaned)
 
-                # --- Display Results ---
                 st.markdown("---")
                 st.markdown("## 📊 Analysis Results")
 
@@ -420,11 +465,11 @@ if submit:
                 try:
                     score_val = int(score.replace("%", "").strip())
                     if score_val >= 80:
-                        st.success("🟢 Excellent! Your resume is well-optimized for ATS systems.")
+                        st.success("🟢 Excellent! Your resume is well-optimized.")
                     elif score_val >= 60:
-                        st.warning("🟡 Average. A few improvements can significantly boost your score.")
+                        st.warning("🟡 Average. Some improvements needed.")
                     else:
-                        st.error("🔴 Low score. Your resume needs significant improvements.")
+                        st.error("🔴 Low score. Resume needs improvement.")
                 except:
                     pass
 
@@ -433,63 +478,47 @@ if submit:
                 col1, col2 = st.columns(2)
                 with col1:
                     st.subheader("✅ Key Strengths")
-                    strengths = res_json.get("Strengths", [])
-                    if strengths:
-                        for s in strengths:
-                            st.success(f"• {s}")
-                    else:
-                        st.info("No strengths identified.")
+                    for s in res_json.get("Strengths", []):
+                        st.success(f"• {s}")
 
                 with col2:
                     st.subheader("⚠️ Areas for Improvement")
-                    weaknesses = res_json.get("Weaknesses", [])
-                    if weaknesses:
-                        for w in weaknesses:
-                            st.warning(f"• {w}")
-                    else:
-                        st.info("No major weaknesses found!")
+                    for w in res_json.get("Weaknesses", []):
+                        st.warning(f"• {w}")
 
                 st.markdown("---")
-
                 st.subheader("🔍 Missing Critical Keywords")
                 keywords = res_json.get("Missing Keywords", [])
                 if keywords:
-                    keyword_html = " ".join([
-                        f'<span style="background-color:#ff4b4b; color:white; padding:4px 10px; '
-                        f'border-radius:12px; margin:4px; display:inline-block;">{k}</span>'
+                    kw_html = " ".join([
+                        f'<span style="background:#ff4b4b;color:white;padding:4px 10px;'
+                        f'border-radius:12px;margin:4px;display:inline-block;">{k}</span>'
                         for k in keywords
                     ])
-                    st.markdown(keyword_html, unsafe_allow_html=True)
+                    st.markdown(kw_html, unsafe_allow_html=True)
                 else:
-                    st.success("🎉 Great! Your resume is already keyword-rich.")
+                    st.success("🎉 Resume is already keyword-rich!")
 
                 st.markdown("---")
-
                 st.subheader("💡 Expert Suggestions")
                 suggestions = res_json.get("Suggestions", [])
-                if suggestions:
-                    for i, sug in enumerate(suggestions, 1):
-                        st.info(f"**{i}.** {sug}")
-                else:
-                    st.info("No additional suggestions.")
+                for idx, sug in enumerate(suggestions, 1):
+                    st.info(f"**{idx}.** {sug}")
 
                 st.markdown("---")
 
-                # ✨ Optimized Resume Download
                 st.markdown("## ✨ Download Optimized Resume")
-                st.markdown("AI rewrites your resume with missing keywords naturally added — same structure, same background.")
+                st.markdown("AI rewrites your resume to achieve **90%+ ATS score** — Image 2 style format, clickable links, 1 page.")
 
                 with st.spinner("✍️ Generating optimized resume..."):
                     try:
                         optimized_text = get_optimized_resume_text(
-                            resume_text,
-                            jd_context,
+                            resume_text, jd_context,
                             keywords if keywords else [],
                             suggestions if suggestions else []
                         )
 
                         pdf_buffer = generate_optimized_pdf(optimized_text)
-
                         original_name = uploaded_file.name.replace(".pdf", "")
                         download_filename = f"{original_name}_optimized.pdf"
 
@@ -500,20 +529,18 @@ if submit:
                             mime="application/pdf",
                             use_container_width=True
                         )
-                        st.success("✅ Optimized resume ready! Click above to download.")
-                        st.caption("💡 Same content — keywords and suggestions naturally added.")
+                        st.success("✅ Optimized resume ready!")
+                        st.caption("💡 Clean format • Clickable links • 1 page • 90%+ ATS")
 
                     except Exception as e:
                         st.error(f"❌ Could not generate optimized resume: {str(e)}")
-                        st.info("Your ATS analysis above is still complete and accurate.")
+                        st.info("Your ATS analysis above is still complete.")
 
                 st.markdown("---")
                 st.caption("✨ Powered by Google Gemini | Built with Streamlit")
 
             except json.JSONDecodeError as e:
                 st.error(f"❌ JSON Parse Error: {e}")
-                st.warning("This was the raw response received:")
                 st.code(response_text)
-
             except Exception as e:
                 st.error(f"❌ Unexpected Error: {str(e)}")
